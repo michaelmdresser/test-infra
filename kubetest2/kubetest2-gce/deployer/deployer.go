@@ -18,13 +18,13 @@ limitations under the License.
 package deployer
 
 import (
-	"fmt"
+	// TODO: clean up imports
 	// "io/ioutil"
+	// realexec "os/exec" // Only for ExitError; Use kubetest2/pkg/exec to actually exec stuff
+	"fmt"
 	"log"
 	"os"
-	// realexec "os/exec" // Only for ExitError; Use kubetest2/pkg/exec to actually exec stuff
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/spf13/pflag"
@@ -53,8 +53,8 @@ type deployer struct {
 	nodeLoggingEnabled      bool
 	// path to the root of the local kubernetes repo
 	kubernetesRootPath string
+	// TODO: pull artifacts from GCS -- propagate to the flag verifiers
 
-	// TODO: is multizone necessary as a cmd line flag if e2e zones is set?
 	multizone bool
 	e2eZones  []string
 
@@ -62,6 +62,16 @@ type deployer struct {
 
 	// TODO: necessary?
 	testPrepared bool
+
+	// these are needed to create firewall rules, however their
+	// values are determined by config-test.sh. We cannot include
+	// these as a flag to the program at the moment, because they
+	// will be overridden when cluster/gce/util.sh sources
+	// config-test.sh when we call kube-up.sh or kube-down.sh.
+	// They are going to be set by sourcing config-test.sh in this
+	// program and finding the values of NODE_TAG and NETWORK.
+	nodeTag string
+	network string
 }
 
 // New implements deployer.New for gke
@@ -76,36 +86,6 @@ func New(opts types.Options) (types.Deployer, *pflag.FlagSet) {
 	return d, bindFlags(d)
 }
 
-// verifyFlags validates that required flags are set, as well as
-// ensuring that location() will not return errors.
-/*
-func (d *deployer) verifyFlags() error {
-	if d.cluster == "" {
-		return fmt.Errorf("--cluster-name must be set for GKE deployment")
-	}
-	if d.project == "" {
-		return fmt.Errorf("--project must be set for GKE deployment")
-	}
-	if _, err := d.location(); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (d *deployer) location() (string, error) {
-	if d.zone == "" && d.region == "" {
-		return "", fmt.Errorf("--zone or --region must be set for GKE deployment")
-	} else if d.zone != "" && d.region != "" {
-		return "", fmt.Errorf("--zone and --region cannot both be set")
-	}
-
-	if d.zone != "" {
-		return "--zone=" + d.zone, nil
-	}
-	return "--region=" + d.region, nil
-}
-*/
-
 // assert that New implements types.NewDeployer
 var _ types.NewDeployer = New
 
@@ -118,43 +98,10 @@ func bindFlags(d *deployer) *pflag.FlagSet {
 	flags.StringVar(&d.gcpSSHProxyInstanceName, "gcp-ssh-proxy-instance-name", "", "Name of instance for SSH Proxy.")
 	flags.BoolVar(&d.nodeLoggingEnabled, "node-logging-enabled", false, "If node logging should be enabled.")
 	flags.StringVar(&d.kubernetesRootPath, "kubernetes-root-path", "", "The path to the local Kubernetes repo. Necessary to call certain scripts. Defaults to the current directory.")
-	flags.BoolVar(&d.multizone, "multizone", false, "Whether testing should be multizone.")
-	flags.StringSliceVar(&d.e2eZones, "e2e-zones", []string{}, "Zones for multizone testing. Only considered if multizone is set.")
+	flags.BoolVar(&d.multizone, "multizone", false, "Whether testing should be multizone. If false (default), checks $MULTIZONE (deprecated) in case of legacy override.")
+	flags.StringSliceVar(&d.e2eZones, "e2e-zones", []string{}, "Zones for multizone testing. Only considered if multizone is set. If not set, checks $E2E_ZONES (deprecated) before defaulting to empty slice.")
 	flags.IntVar(&d.numNodes, "num-nodes", 0, "Number of nodes to run the cluster on. Defaults to the environment variable NUM_NODES if not set (or set to < 1).")
 	return flags
-}
-
-func (d *deployer) verifyFlags() error {
-	if d.numNodes < 1 {
-		log.Print("Num nodes was not set. Defaulting to NUM_NODES environment variable. This functionality is deprecated.")
-		if numNodes, err := strconv.Atoi(os.Getenv("NUM_NODES")); err == nil {
-			d.numNodes = numNodes
-		} else {
-			return fmt.Errorf("Failed to get NUM_NODES from environment: %s", err)
-		}
-	}
-	if d.clusterIPRange == "" {
-		d.clusterIPRange = getClusterIPRange(d.numNodes)
-	}
-	// TODO: default based on gcloud?
-	if d.gcpProject == "" {
-		return fmt.Errorf("no GCP project was set")
-	}
-	if d.gcpZone == "" {
-		return fmt.Errorf("no GCP zone was set")
-	}
-	// TODO: also verify that the set path is a kube repo
-	if d.kubernetesRootPath == "" {
-		path, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("Failed to get current working directory for Kubernetes root path: %s", err)
-		}
-		d.kubernetesRootPath = path
-	}
-	if d.multizone && len(d.e2eZones) == 0 {
-		return fmt.Errorf("multizone set but no e2e zones provided")
-	}
-	return nil
 }
 
 // assert that deployer implements types.Deployer
@@ -165,124 +112,22 @@ func (d *deployer) Provider() string {
 }
 
 func (d *deployer) Build() error {
-	// TODO: handle build
-	/*
-		if err := build.Build(); err != nil {
-			return err
-		}
+	// TODO: handle GCE pull
 
-		if d.stageLocation != "" {
-			if err := build.Stage(d.stageLocation); err != nil {
-				return fmt.Errorf("error staging build: %v", err)
-			}
-		}
-	*/
-	return nil
-}
-
-func kubeconfigIsPresent() error {
-	_, err := os.Stat(kubeconfigPath)
-	return err
-
-	// TODO: this block necessary?
-	/*
-		if err == nil {
-			return nil
-		} else if os.IsNotExist(err) {
-			return err
-		}
-		return fmt.Errorf("Kubeconfig may or may not exist. Err: %s")
-	*/
-}
-
-// TODO: idempotent
-func deleteKubeconfig() error {
-	err := os.Remove(kubeconfigPath)
-	if err != nil {
-		return fmt.Errorf("Could not remove kubeconfig: %s")
+	if err := d.verifyBuildFlags(); err != nil {
+		return err
 	}
-	return nil
-}
 
-func (d *deployer) buildCommonEnv() []string {
-	env := os.Environ()
-
-	env = append(env, fmt.Sprintf("PROJECT=%s", d.gcpProject))
-	env = append(env, fmt.Sprintf("ZONE=%s", d.gcpZone))
-	env = append(env, fmt.Sprintf("KUBECONFIG=%s", kubeconfigPath))
-	env = append(env, fmt.Sprintf("KUBE_ROOT=%s", d.kubernetesRootPath))
-	env = append(env, fmt.Sprintf("CLUSTER_IP_RANGE=%s", d.clusterIPRange))
-	env = append(env, fmt.Sprintf("KUBE_ENABLE_NODE_LOGGING=%s", d.nodeLoggingEnabled))
-
-	return env
-}
-
-func (d *deployer) createFirewallRules() error {
-	cmd := exec.Command(
-		"gcloud", "compute", "firewall-rules", "create",
-		"--project="+d.gcpProject,
-		// TODO: figure out proper value for node tag
-		// "--target-tags=NODE_TAG"
-		"--allow tcp:80,tcp:8080",
-		// TODO: figur eout proper value, should be default or set by env var
-		// "--notework NETWORK"
-		// TODO: update after geetting correct node tag value
-		"NODE_TAG-http-alt",
-	)
-	exec.NoOutput(cmd)
+	cmd := exec.Command("make", "-C", d.kubernetesRootPath, "bazel-release")
 	err := cmd.Run()
 	if err != nil {
-		// TODO: handle error (bundle up?)
+		return fmt.Errorf("error during make step of build: %s", err)
 	}
 
-	cmd = exec.Command(
-		"gcloud", "compute", "firewall-rules", "create",
-		"--project "+d.gcpProject,
-		// TODO: set properly
-		// "--target-tags NODE_TAG",
-		"--allow tcp:30000-32767,udp:30000-32767",
-		// TODO
-		// "--network NETWORK",
-		"NODE_TAG-nodeports",
-	)
-	exec.NoOutput(cmd)
-	err = cmd.Run()
-	if err != nil {
-		// TODO handle error
-	}
-
-	return nil
-}
-
-func (d *deployer) ensureFirewallRules() error {
-	// TODO
-	return nil
-}
-
-func (d *deployer) deleteFirewallRules() error {
-	cmd := exec.Command(
-		"gcloud", "compute", "firewall-rules", "delete",
-		"--project "+d.gcpProject,
-		// TODO: verify and move to const like create
-		"NODE_TAG-http-alt",
-	)
-	exec.NoOutput(cmd)
-	err := cmd.Run()
-	if err != nil {
-		// TODO: handle (bundle)
-	}
-
-	cmd = exec.Command(
-		"gcloud", "compute", "firewall-rules", "delete",
-		"--project "+d.gcpProject,
-		// TODO: verify and move to const like create
-		"NODE_TAG-nodeports",
-	)
-	exec.NoOutput(cmd)
-	err = cmd.Run()
-	if err != nil {
-		// TODO: handle (bundle)
-	}
+	// no untarring, uploading, etc is necessary because
+	// kube-up/down use find-release-tars and upload-tars
+	// which know how to find the tars, assuming KUBE_ROOT
+	// is set
 
 	return nil
 }
@@ -291,7 +136,7 @@ func (d *deployer) Up() error {
 	if err := d.verifyFlags(); err != nil {
 		return err
 	}
-	if err := kubeconfigIsPresent(); err != nil {
+	if err := d.kubeconfigIsPresent(); err != nil {
 		return fmt.Errorf("Kubeconfig is not present at expected path: %s", err)
 	}
 
@@ -299,6 +144,7 @@ func (d *deployer) Up() error {
 
 	script := filepath.Join(d.kubernetesRootPath, "cluster", "kube-up.sh")
 	if d.multizone {
+		// in a multizone deployment, we have to iterate over each zone and call kube-down for each
 		multiErrs := make([]error, len(d.e2eZones))
 		for i, zone := range d.e2eZones {
 			multiEnv := kubeUpEnv
@@ -311,7 +157,6 @@ func (d *deployer) Up() error {
 
 			cmd := exec.Command(script)
 			exec.NoOutput(cmd)
-			// TODO: does this actually work?
 			cmd.SetEnv(multiEnv...)
 			err := cmd.Run()
 			if err != nil {
@@ -324,7 +169,6 @@ func (d *deployer) Up() error {
 	} else {
 		cmd := exec.Command(script)
 		exec.NoOutput(cmd)
-		// TODO: does this work?
 		cmd.SetEnv(kubeUpEnv...)
 		err := cmd.Run()
 		if err != nil {
@@ -362,28 +206,26 @@ func (d *deployer) DumpClusterLogs() error {
 	logexporterGCSPath := ""
 
 	// mostly copied from e2e.go
+	// a warning: log-dump.sh does not exist in Kubernetes 1.3 or earlier. This should not be a concern.
 	logDumpPath := filepath.Join(d.kubernetesRootPath, "cluster", "log-dump", "log-dump.sh")
-	// TODO: do we need to keep this code path?
-	// cluster/log-dump/log-dump.sh only exists in the Kubernetes tree
-	// post-1.3. If it doesn't exist, print a debug log but do not report an error.
 	if _, err := os.Stat(logDumpPath); err != nil {
-		log.Printf("Could not find %s. This is expected if running tests against a Kubernetes 1.3 or older tree.", logDumpPath)
-		if cwd, err := os.Getwd(); err == nil {
-			log.Printf("CWD: %v", cwd)
-		}
-		return nil
+		return fmt.Errorf("calling stat for log-dump.sh at %s failed: %s", logDumpPath, err)
 	}
-	// TODO: set env for running log dump
+
+	// TODO: check env for multizone stuff
+	dumpEnv := d.buildCommonEnv()
 	if logexporterGCSPath != "" {
 		log.Printf("Dumping logs from nodes to GCS directly at path: %v", logexporterGCSPath)
 		cmd := exec.Command(logDumpPath, localArtifactsDir, logexporterGCSPath)
 		exec.NoOutput(cmd)
+		cmd.SetEnv(dumpEnv...)
 		return cmd.Run()
 	}
 
 	log.Printf("Dumping logs locally to: %v", localArtifactsDir)
 	cmd := exec.Command(logDumpPath, localArtifactsDir)
 	exec.NoOutput(cmd)
+	cmd.SetEnv(dumpEnv...)
 	return cmd.Run()
 }
 
@@ -408,7 +250,7 @@ func (d *deployer) TestSetup() error {
 // a temp directory, creating one if one does not exist.
 // It also sets the KUBECONFIG environment variable appropriately.
 func (d *deployer) Kubeconfig() (string, error) {
-	if err := kubeconfigIsPresent(); err != nil {
+	if err := d.kubeconfigIsPresent(); err != nil {
 		return "", err
 	}
 	return kubeconfigPath, nil
@@ -418,7 +260,7 @@ func (d *deployer) Down() error {
 	if err := d.verifyFlags(); err != nil {
 		return err
 	}
-	if err := kubeconfigIsPresent(); err != nil {
+	if err := d.kubeconfigIsPresent(); err != nil {
 		return fmt.Errorf("Kubeconfig is not present at expected path: %s", err)
 	}
 
@@ -430,6 +272,8 @@ func (d *deployer) Down() error {
 
 	script := filepath.Join(d.kubernetesRootPath, "cluster", "kube-down.sh")
 	if d.multizone {
+		// in a multizone deployment, we have to iterate over each zone and call kube-down for each
+
 		multiErrs := make([]error, len(d.e2eZones))
 
 		// iterate in reverse order like test-teardown
@@ -447,7 +291,6 @@ func (d *deployer) Down() error {
 
 			cmd := exec.Command(script)
 			exec.NoOutput(cmd)
-			// TODO: does this work?
 			cmd.SetEnv(multiEnv...)
 			err := cmd.Run()
 			if err != nil {
@@ -460,7 +303,6 @@ func (d *deployer) Down() error {
 	} else {
 		cmd := exec.Command(script)
 		exec.NoOutput(cmd)
-		// TODO: does this work?
 		cmd.SetEnv(kubeDownEnv...)
 		err := cmd.Run()
 		if err != nil {
@@ -469,21 +311,4 @@ func (d *deployer) Down() error {
 	}
 
 	return nil
-}
-
-// Calculates the cluster IP range based on the no. of nodes in the cluster.
-// Note: This mimics the function get-cluster-ip-range used by kube-up script.
-// Copied from kubetest's bash.go
-func getClusterIPRange(numNodes int) string {
-	suggestedRange := "10.64.0.0/14"
-	if numNodes > 1000 {
-		suggestedRange = "10.64.0.0/13"
-	}
-	if numNodes > 2000 {
-		suggestedRange = "10.64.0.0/12"
-	}
-	if numNodes > 4000 {
-		suggestedRange = "10.64.0.0/11"
-	}
-	return suggestedRange
 }
