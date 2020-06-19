@@ -124,6 +124,7 @@ func (d *deployer) kubectlDump() error {
 	if err != nil {
 		return fmt.Errorf("couldn't use kubectl to dump cluster info: %s", err)
 	}
+	klog.Infof("About to run: %s", args)
 
 	return nil
 }
