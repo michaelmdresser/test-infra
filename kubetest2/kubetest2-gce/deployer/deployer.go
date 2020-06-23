@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"k8s.io/klog"
 	"k8s.io/test-infra/kubetest2/pkg/exec"
@@ -43,6 +44,8 @@ type deployer struct {
 	RepoRoot         string `desc:"The path to the root of the local kubernetes/cloud-provider-gcp repo. Necessary to call certain scripts. Defaults to the current directory. If operating in legacy mode, this should be set to the local kubernetes/kubernetes repo."`
 	GCPProject       string `desc:"GCP Project to create VMs in. Must be set."`
 	OverwriteLogsDir bool   `desc:"If set, will overwrite an existing logs directory if one is encountered during dumping of logs. Useful when runnning tests locally."`
+
+	doVerifyFlags sync.Once
 }
 
 // New implements deployer.New for gce

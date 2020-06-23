@@ -8,6 +8,7 @@ go_library(
         "down.go",
         "dumplogs.go",
         "up.go",
+        "common.go",
     ],
     importpath = "k8s.io/test-infra/kubetest2/kubetest2-gce/deployer",
     visibility = ["//visibility:public"],
