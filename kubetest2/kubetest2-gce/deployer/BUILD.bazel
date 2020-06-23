@@ -4,11 +4,11 @@ go_library(
     name = "go_default_library",
     srcs = [
         "build.go",
+        "common.go",
         "deployer.go",
         "down.go",
         "dumplogs.go",
         "up.go",
-        "common.go",
     ],
     importpath = "k8s.io/test-infra/kubetest2/kubetest2-gce/deployer",
     visibility = ["//visibility:public"],
